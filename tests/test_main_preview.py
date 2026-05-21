@@ -1,10 +1,12 @@
 import contextlib
 import io
+import logging
 from pathlib import Path
 import threading
 from types import SimpleNamespace
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -16,9 +18,11 @@ from main import (
     _handle_calibration_debug_key,
     _handle_keyboard_debug_key,
     _should_print_runtime_debug,
+    main,
     run_webcam_preview,
 )
 from control.scroll_engine import ACTION_NO_ACTION, ACTION_SCROLL_DOWN
+from ui.preview_state import PreviewState
 from utils.config_loader import DEFAULT_SETTINGS, load_settings
 from vision.blink_calibration import (
     CALIBRATION_ACTION_FAILED,
@@ -70,6 +74,16 @@ class IntermittentFaceMeshDetector(FakeFaceMeshDetector):
             self.failures += 1
             raise RuntimeError("landmarker failed")
 
+        return super().process_frame(frame)
+
+
+class StoppingFaceMeshDetector(FakeFaceMeshDetector):
+    def __init__(self, stop_event):
+        super().__init__()
+        self.stop_event = stop_event
+
+    def process_frame(self, frame):
+        self.stop_event.set()
         return super().process_frame(frame)
 
 
@@ -195,6 +209,28 @@ class RunningBlinkCalibrator(FakeBlinkCalibrator):
         return True
 
 
+class FakeDebugOverlay:
+    def __init__(self):
+        self.draw_calls = 0
+
+    def record_event(self, gesture, action, timestamp_ms):
+        pass
+
+    def snapshot(self, **kwargs):
+        return kwargs
+
+    def draw(self, frame, snapshot):
+        self.draw_calls += 1
+
+
+class FailingTrayIcon:
+    def start(self):
+        raise RuntimeError("tray import failed")
+
+    def stop(self):
+        pass
+
+
 class MainPreviewTests(unittest.TestCase):
     def test_preview_displays_face_mesh_processed_frame(self):
         webcam = FakeWebcam(frames=["frame"])
@@ -222,20 +258,79 @@ class MainPreviewTests(unittest.TestCase):
     def test_preview_releases_webcam_when_open_fails(self):
         webcam = FakeWebcam(frames=[], opens=False)
         windows_closed = []
+        logger = logging.getLogger("lazyscroll.test.camera")
 
         stdout = io.StringIO()
-        with contextlib.redirect_stdout(stdout):
-            exit_code = run_webcam_preview(
-                webcam=webcam,
-                face_mesh_detector=FakeFaceMeshDetector(),
-                start_scroll_loop=False,
-                destroy_windows=lambda: windows_closed.append(True),
-            )
+        with self.assertLogs(logger.name, level="ERROR") as logs:
+            with contextlib.redirect_stdout(stdout):
+                exit_code = run_webcam_preview(
+                    webcam=webcam,
+                    face_mesh_detector=FakeFaceMeshDetector(),
+                    start_scroll_loop=False,
+                    destroy_windows=lambda: windows_closed.append(True),
+                    logger=logger,
+                )
 
         self.assertEqual(exit_code, 1)
         self.assertTrue(webcam.released)
         self.assertEqual(windows_closed, [True])
         self.assertIn("Error: webcam not found or could not be opened.", stdout.getvalue())
+        self.assertIn("Webcam open failed", "\n".join(logs.output))
+
+    def test_model_missing_error_is_logged(self):
+        webcam = FakeWebcam(frames=["frame"])
+        logger = logging.getLogger("lazyscroll.test.model")
+
+        with patch("main.FaceMeshDetector", side_effect=FileNotFoundError("missing model")):
+            with self.assertLogs(logger.name, level="ERROR") as logs:
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    exit_code = run_webcam_preview(
+                        webcam=webcam,
+                        start_scroll_loop=False,
+                        start_tray=False,
+                        destroy_windows=lambda: None,
+                        logger=logger,
+                    )
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("missing model", stdout.getvalue())
+        self.assertIn("FaceLandmarker model missing", "\n".join(logs.output))
+
+    def test_tray_start_failure_is_logged_and_app_still_runs(self):
+        webcam = FakeWebcam(frames=["frame"])
+        logger = logging.getLogger("lazyscroll.test.tray")
+
+        stdout = io.StringIO()
+        with self.assertLogs(logger.name, level="WARNING") as logs:
+            with contextlib.redirect_stdout(stdout):
+                exit_code = run_webcam_preview(
+                    webcam=webcam,
+                    face_mesh_detector=FakeFaceMeshDetector(),
+                    start_scroll_loop=False,
+                    start_tray=True,
+                    tray_icon=FailingTrayIcon(),
+                    mirror_frame=lambda frame: frame,
+                    imshow=lambda window_name, frame: None,
+                    wait_key=lambda delay_ms: ord("q"),
+                    destroy_windows=lambda: None,
+                    logger=logger,
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("tray icon could not start", stdout.getvalue())
+        self.assertIn("Tray startup failed", "\n".join(logs.output))
+
+    def test_uncaught_exception_in_main_is_logged(self):
+        logger = logging.getLogger("lazyscroll.test.uncaught")
+
+        with patch("main.run_webcam_preview", side_effect=RuntimeError("boom")):
+            with self.assertLogs(logger.name, level="ERROR") as logs:
+                exit_code = main(logger=logger)
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("Uncaught exception", "\n".join(logs.output))
+        self.assertIn("boom", "\n".join(logs.output))
 
     def test_preview_prints_startup_status_messages(self):
         webcam = FakeWebcam(frames=["frame"])
@@ -300,6 +395,68 @@ class MainPreviewTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(detector.frames, ["good-frame"])
         self.assertIn("Warning: FaceLandmarker failed; retrying.", stdout.getvalue())
+
+    def test_hidden_preview_keeps_detection_running_without_rendering(self):
+        stop_event = threading.Event()
+        webcam = FakeWebcam(frames=["frame"])
+        detector = StoppingFaceMeshDetector(stop_event)
+        iris_tracker = FakeIrisTracker()
+        blink_detector = FakeBlinkDetector()
+        scroll_engine = FakeScrollEngine()
+        overlay = FakeDebugOverlay()
+        shown_frames = []
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = run_webcam_preview(
+                webcam=webcam,
+                face_mesh_detector=detector,
+                iris_tracker=iris_tracker,
+                blink_detector=blink_detector,
+                scroll_engine=scroll_engine,
+                debug_overlay=overlay,
+                preview_state=PreviewState(visible=False),
+                stop_event=stop_event,
+                start_scroll_loop=False,
+                start_tray=False,
+                settings={"preview_fps_limit": 0},
+                mirror_frame=lambda frame: f"mirrored-{frame}",
+                imshow=lambda window_name, frame: shown_frames.append(frame),
+                wait_key=lambda delay_ms: ord("q"),
+                destroy_windows=lambda: None,
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(detector.frames, ["frame"])
+        self.assertEqual(blink_detector.eye_open_values, [0.22])
+        self.assertEqual(scroll_engine.gestures, ["DOUBLE_BLINK"])
+        self.assertEqual(shown_frames, [])
+        self.assertEqual(overlay.draw_calls, 0)
+
+    def test_start_minimized_is_ignored_when_tray_is_disabled(self):
+        webcam = FakeWebcam(frames=["frame"])
+        detector = FakeFaceMeshDetector()
+        shown_frames = []
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = run_webcam_preview(
+                webcam=webcam,
+                face_mesh_detector=detector,
+                settings={
+                    "start_minimized": True,
+                    "tray_enabled": False,
+                    "preview_fps_limit": 0,
+                },
+                start_scroll_loop=False,
+                mirror_frame=lambda frame: frame,
+                imshow=lambda window_name, frame: shown_frames.append(frame),
+                wait_key=lambda delay_ms: ord("q"),
+                destroy_windows=lambda: None,
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(shown_frames, ["annotated-frame"])
 
     def test_preview_exits_gracefully_after_repeated_frame_failures(self):
         webcam = FakeWebcam(frames=[])

@@ -6,8 +6,9 @@ from typing import Any
 import cv2
 import numpy as np
 
+from utils.resource_path import model_path as _resolve_model_path
 
-DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "face_landmarker.task"
+DEFAULT_MODEL_PATH = _resolve_model_path()
 
 
 class FaceMeshDetector:

@@ -50,6 +50,48 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertEqual(loaded_settings["closed_threshold"], 0.23)
             self.assertEqual(loaded_settings["speed_preset"], "normal")
 
+    def test_load_settings_includes_start_minimized_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "settings.json"
+
+            settings = load_settings(path)
+
+            self.assertIn("start_minimized", settings)
+            self.assertFalse(settings["start_minimized"])
+
+    def test_load_settings_includes_tray_enabled_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "settings.json"
+
+            settings = load_settings(path)
+
+            self.assertIn("tray_enabled", settings)
+            self.assertTrue(settings["tray_enabled"])
+
+    def test_load_settings_preserves_existing_start_minimized(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "settings.json"
+            path.write_text(json.dumps({"start_minimized": True}), encoding="utf-8")
+
+            settings = load_settings(path)
+
+            self.assertTrue(settings["start_minimized"])
+
+    def test_load_settings_preserves_existing_tray_enabled_false(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "settings.json"
+            path.write_text(json.dumps({"tray_enabled": False}), encoding="utf-8")
+
+            settings = load_settings(path)
+
+            self.assertFalse(settings["tray_enabled"])
+
+    def test_default_settings_contains_phase11_keys(self):
+        self.assertIn("start_minimized", DEFAULT_SETTINGS)
+        self.assertIn("tray_enabled", DEFAULT_SETTINGS)
+        self.assertFalse(DEFAULT_SETTINGS["start_minimized"])
+        self.assertTrue(DEFAULT_SETTINGS["tray_enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

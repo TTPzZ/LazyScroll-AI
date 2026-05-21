@@ -12,6 +12,7 @@
   "preview_height": 480,
   "preview_width": 640,
   "scroll_interval_ms": 120,
+  "start_minimized": false,
   "speed_preset": "normal",
   "speed_presets": {
     "fast": {
@@ -30,5 +31,6 @@
       "up_scroll_amount_per_step": 80
     }
   },
+  "tray_enabled": true,
   "up_scroll_amount_per_step": 120
 }

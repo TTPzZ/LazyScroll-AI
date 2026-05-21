@@ -1,4 +1,5 @@
 from collections.abc import Callable
+import logging
 
 from control.scroll_constants import (
     ACTION_START_AUTO_SCROLL,
@@ -52,4 +53,8 @@ class AudioFeedback:
 
             winsound.Beep(frequency, duration)
         except Exception:
+            logging.getLogger("lazyscroll").warning(
+                "Audio feedback failed; falling back to terminal bell",
+                exc_info=True,
+            )
             print("\a", end="")

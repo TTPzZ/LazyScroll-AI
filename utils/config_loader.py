@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from utils.resource_path import config_dir as _config_dir
+
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "closed_threshold": 0.18,
@@ -20,6 +22,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "preview_fps_limit": 30,
     "audio_feedback": True,
     "max_frame_failures": 30,
+    "start_minimized": False,
+    "tray_enabled": True,
     "speed_presets": {
         "slow": {
             "down_scroll_amount_per_step": -80,
@@ -40,7 +44,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 }
 
 
-DEFAULT_SETTINGS_PATH = Path("config") / "settings.json"
+DEFAULT_SETTINGS_PATH = _config_dir() / "settings.json"
 
 
 def load_settings(path: str | Path = DEFAULT_SETTINGS_PATH) -> dict[str, Any]:
