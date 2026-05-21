@@ -1,0 +1,34 @@
+{
+  "audio_feedback": true,
+  "auto_scroll_timeout_ms": 20000,
+  "closed_threshold": 0.2849609779543458,
+  "down_scroll_amount_per_step": -120,
+  "last_event_display_ms": 1500,
+  "long_blink_ms": 700,
+  "max_frame_failures": 30,
+  "multi_blink_window_ms": 800,
+  "overlay_mode": "normal",
+  "preview_fps_limit": 30,
+  "preview_height": 480,
+  "preview_width": 640,
+  "scroll_interval_ms": 120,
+  "speed_preset": "normal",
+  "speed_presets": {
+    "fast": {
+      "down_scroll_amount_per_step": -220,
+      "scroll_interval_ms": 70,
+      "up_scroll_amount_per_step": 220
+    },
+    "normal": {
+      "down_scroll_amount_per_step": -120,
+      "scroll_interval_ms": 120,
+      "up_scroll_amount_per_step": 120
+    },
+    "slow": {
+      "down_scroll_amount_per_step": -80,
+      "scroll_interval_ms": 180,
+      "up_scroll_amount_per_step": 80
+    }
+  },
+  "up_scroll_amount_per_step": 120
+}

@@ -5,6 +5,7 @@ from vision.gaze_detector import (
     LONG_BLINK,
     NO_GESTURE,
     SINGLE_BLINK,
+    TRIPLE_BLINK,
     BlinkGestureDetector,
 )
 
@@ -18,37 +19,31 @@ class BlinkGestureDetectorTests(unittest.TestCase):
         self.assertEqual(gesture, NO_GESTURE)
         self.assertFalse(closed)
 
-    def test_single_blink_emits_only_after_confirmation_delay(self):
+    def test_single_blink_emits_immediately_after_open_transition(self):
         detector = BlinkGestureDetector(
             closed_threshold=0.18,
-            double_blink_window_ms=800,
+            multi_blink_window_ms=800,
         )
 
         detector.update(0.25, timestamp_ms=1000)
         closed_gesture, closed = detector.update(0.08, timestamp_ms=1040)
         held_gesture, held_closed = detector.update(0.07, timestamp_ms=1080)
         reopen_gesture, reopened_closed = detector.update(0.24, timestamp_ms=1120)
-        before_confirm_gesture, before_confirm_closed = detector.update(0.25, timestamp_ms=1919)
-        confirmed_gesture, confirmed_closed = detector.update(0.25, timestamp_ms=1921)
-        repeated_gesture, repeated_closed = detector.update(0.25, timestamp_ms=2000)
+        repeated_gesture, repeated_closed = detector.update(0.25, timestamp_ms=1200)
 
         self.assertEqual(closed_gesture, NO_GESTURE)
         self.assertTrue(closed)
         self.assertEqual(held_gesture, NO_GESTURE)
         self.assertTrue(held_closed)
-        self.assertEqual(reopen_gesture, NO_GESTURE)
+        self.assertEqual(reopen_gesture, SINGLE_BLINK)
         self.assertFalse(reopened_closed)
-        self.assertEqual(before_confirm_gesture, NO_GESTURE)
-        self.assertFalse(before_confirm_closed)
-        self.assertEqual(confirmed_gesture, SINGLE_BLINK)
-        self.assertFalse(confirmed_closed)
         self.assertEqual(repeated_gesture, NO_GESTURE)
         self.assertFalse(repeated_closed)
 
-    def test_double_blink_emits_double_blink_only(self):
+    def test_double_blink_emits_single_then_double_within_window(self):
         detector = BlinkGestureDetector(
             closed_threshold=0.18,
-            double_blink_window_ms=800,
+            multi_blink_window_ms=800,
         )
 
         gestures = []
@@ -61,10 +56,46 @@ class BlinkGestureDetectorTests(unittest.TestCase):
         gestures.append(second_gesture)
         gestures.append(detector.update(0.25, timestamp_ms=2200)[0])
 
-        self.assertEqual(first_gesture, NO_GESTURE)
+        self.assertEqual(first_gesture, SINGLE_BLINK)
         self.assertEqual(second_gesture, DOUBLE_BLINK)
-        self.assertNotIn(SINGLE_BLINK, gestures)
+        self.assertEqual(gestures.count(SINGLE_BLINK), 1)
         self.assertEqual(gestures.count(DOUBLE_BLINK), 1)
+
+    def test_triple_blink_emits_single_double_then_triple_within_window(self):
+        detector = BlinkGestureDetector(
+            closed_threshold=0.18,
+            multi_blink_window_ms=800,
+        )
+
+        detector.update(0.25, timestamp_ms=1000)
+        detector.update(0.08, timestamp_ms=1040)
+        first_gesture, _ = detector.update(0.25, timestamp_ms=1100)
+        detector.update(0.08, timestamp_ms=1260)
+        second_gesture, _ = detector.update(0.25, timestamp_ms=1320)
+        detector.update(0.08, timestamp_ms=1480)
+        third_gesture, third_closed = detector.update(0.25, timestamp_ms=1540)
+        next_gesture, _ = detector.update(0.25, timestamp_ms=1600)
+
+        self.assertEqual(first_gesture, SINGLE_BLINK)
+        self.assertEqual(second_gesture, DOUBLE_BLINK)
+        self.assertEqual(third_gesture, TRIPLE_BLINK)
+        self.assertFalse(third_closed)
+        self.assertEqual(next_gesture, NO_GESTURE)
+
+    def test_second_blink_after_window_starts_new_single_blink_sequence(self):
+        detector = BlinkGestureDetector(
+            closed_threshold=0.18,
+            multi_blink_window_ms=800,
+        )
+
+        detector.update(0.25, timestamp_ms=1000)
+        detector.update(0.08, timestamp_ms=1040)
+        first_gesture, _ = detector.update(0.25, timestamp_ms=1100)
+        detector.update(0.08, timestamp_ms=2000)
+        second_gesture, _ = detector.update(0.25, timestamp_ms=2060)
+
+        self.assertEqual(first_gesture, SINGLE_BLINK)
+        self.assertEqual(second_gesture, SINGLE_BLINK)
 
     def test_long_blink_emits_long_blink_only(self):
         detector = BlinkGestureDetector(
@@ -94,6 +125,8 @@ class BlinkGestureDetectorTests(unittest.TestCase):
         self.assertEqual(reopened_gesture, NO_GESTURE)
         self.assertFalse(reopened_closed)
         self.assertNotIn(SINGLE_BLINK, gestures)
+        self.assertNotIn(DOUBLE_BLINK, gestures)
+        self.assertNotIn(TRIPLE_BLINK, gestures)
         self.assertEqual(gestures.count(LONG_BLINK), 1)
 
     def test_missing_eye_open_breaks_blink_transition(self):
